@@ -6,7 +6,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
-#include <WiFiClient.h>
+#include <NetworkClient.h>
 #include <HTTPClient.h>
 #include <mbedtls/sha1.h>
 #include <mbedtls/sha256.h>
@@ -297,6 +297,7 @@ private:
     }
 
 private:
+    NetworkClient& networkClient;
     String url;
     String cookie;
     std::unique_ptr<KlapCipher> cipher;
@@ -313,6 +314,8 @@ private:
     }
 
 public:
+    TapoProtocol (NetworkClient& nc) : networkClient (nc) {}
+
     ResultJson requestJson (const String &method, JsonVariant &&params = JsonVariant (), const int retries = 3) const {
         JsonDocument doc;
 
@@ -323,9 +326,8 @@ public:
         const auto [data_request, seq] = cipher->encrypt (request);
         const String url_request (url + "/request?seq=" + String (seq));
         DEBUG_TAPO_PRINTF ("tapo::TapoProtocol::request: request --> url=%s, size=%d, data=<<<%s>>>\n", url_request.c_str (), request.length (), request.c_str ());
-        WiFiClient client;
         HTTPClient http;
-        http.begin (client, url_request);
+        http.begin (networkClient, url_request);
         http.addHeader ("Cookie", cookie);
         const auto [requestPostSuccess, _] = postWithRetry<Result> ("request", http, data_request.data (), data_request.size (), retries);
         if (! requestPostSuccess)
@@ -359,9 +361,8 @@ public:
 
         const String url_handshake1 ("http://" + ip + "/app/handshake1");
         DEBUG_TAPO_PRINTF ("tapo::TapoProtocol::login: handshake1, commence, url=%s\n", url_handshake1.c_str ());
-        WiFiClient client;
         HTTPClient http;
-        http.begin (client, url_handshake1);
+        http.begin (networkClient, url_handshake1);
         http.collectHeaders (HEADERS_TO_COLLECT, 1);
         const auto [handshake1PostSuccess, handshake1PostCode] = postWithRetry<Result> ("handshake1", http, local_seed.data (), local_seed.size (), retries);
         if (! handshake1PostSuccess)
@@ -392,7 +393,7 @@ public:
         DEBUG_TAPO_PRINTF ("tapo::TapoProtocol::login: handshake2, commence, url=%s\n", url_handshake2.c_str ());
         const auto handshake2_hash = sha256 (join (remote_seed, local_seed, auth_hash));
         DEBUG_TAPO_DUMP ("tapo::TapoProtocol::login: handshake2 hash", handshake2_hash);
-        http.begin (client, url_handshake2);
+        http.begin (networkClient, url_handshake2);
         http.addHeader ("Cookie", cookie);
         auto [handshake2PostSuccess, handshake2PostCode] = postWithRetry<Result> ("handshake2", http, handshake2_hash.data (), handshake2_hash.size (), retries);
         if (! handshake2PostSuccess)

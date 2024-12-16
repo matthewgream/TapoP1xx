@@ -3,7 +3,8 @@
 // -----------------------------------------------------------------------------------------------
 
 void test_P11x (const tapo::DeviceConfig& config) {
-    tapo::P11x device (config);
+    WiFiClient client;
+    tapo::P11x device (config, client);
 
     auto [connect_success, connect_error] = device.connect ();
     if (! connect_success) {
@@ -42,7 +43,8 @@ void test_P11x (const tapo::DeviceConfig& config) {
 // -----------------------------------------------------------------------------------------------
 
 void test_P10x (const tapo::DeviceConfig& config) {
-    tapo::P10x device (config);
+    WiFiClient client;
+    tapo::P10x device (config, client);
 
     auto [connect_success, connect_error] = device.connect ();
     if (! connect_success) {

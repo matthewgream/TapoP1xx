@@ -88,6 +88,7 @@ void inline startTime () {
 // -----------------------------------------------------------------------------------------------
 
 #include "Hardware_TapoP1xx.hpp"
+#include <WiFiClient.h>
 
 Hardware_TapoP1xx *p1xx_device;
 const Hardware_TapoP1xx::Config p1xx_config {

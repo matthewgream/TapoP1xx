@@ -40,12 +40,12 @@ public:
     using Config = DeviceConfig;
 
 protected:
-    TapoProtocol protocol_;
     Config config_;
+    TapoProtocol protocol_;
 
 public:
-    explicit Device (const Config &config) :
-        config_ (config) { }
+    explicit Device (const Config &config, NetworkClient& client) :
+        config_ (config), protocol_  (client) { }
     StringResult connect () {
         return protocol_.login (config_.address, config_.username, config_.password);
     }

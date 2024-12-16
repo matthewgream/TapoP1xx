@@ -10,6 +10,7 @@
 // -----------------------------------------------------------------------------------------------
 
 #include <WiFi.h>
+#include <WiFiClient.h>
 
 class Hardware_TapoP1xx {
 public:
@@ -20,11 +21,12 @@ public:
 private:
     const Config &config;
     tapo::P11x device;
+    WiFiClient network;
 
 public:
     explicit Hardware_TapoP1xx (const Config &cfg) :
         config (cfg),
-        device (config.device) { }
+        device (config.device, network) { }
 
     void begin () {
         auto [connect_success, connect_error] = device.connect ();
