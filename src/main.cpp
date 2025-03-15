@@ -113,7 +113,6 @@ void setup () {
     //     details.debugDump ();
     // }
 
-    p1xx_config.publicKey = tapo::generatePublicKey (); // or store in NVS
     p1xx_device = std::make_unique<Hardware_TapoP1xx> (p1xx_config);
     p1xx_device->begin ();
 }

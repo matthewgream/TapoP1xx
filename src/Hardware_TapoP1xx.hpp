@@ -12,6 +12,116 @@
 // -----------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------
 
+#include <nvs_flash.h>
+
+class PersistentData {
+
+public:
+    static inline constexpr const char *DEFAULT_PERSISTENT_PARTITION = "nvs";
+    static inline constexpr int SPACE_SIZE_MAXIMUM = 15, NAME_SIZE_MAXIMUM = 15, VALUE_STRING_SIZE_MAXIMUM = 4000 - 1;
+
+private:
+    static bool __initialise () {
+        static bool initialised = false;
+        if (! initialised) {
+            initialised = true;
+            esp_err_t err = nvs_flash_init_partition (DEFAULT_PERSISTENT_PARTITION);
+            if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
+                if (nvs_flash_erase_partition (DEFAULT_PERSISTENT_PARTITION) != ESP_OK || nvs_flash_init_partition (DEFAULT_PERSISTENT_PARTITION) != ESP_OK)
+                    return false;
+        }
+        return initialised;
+    }
+
+private:
+    nvs_handle_t _handle;
+    const bool _okay = false;
+
+public:
+    explicit PersistentData (const char *space) :
+        _okay (__initialise () && nvs_open_from_partition (DEFAULT_PERSISTENT_PARTITION, space, NVS_READWRITE, &_handle) == ESP_OK) {
+        assert (strlen (space) <= SPACE_SIZE_MAXIMUM && "PersistentData namespace length > SPACE_SIZE_MAXIMUM");
+    }
+    ~PersistentData () {
+        if (_okay)
+            nvs_close (_handle);
+    }
+
+    bool get (const char *name, uint32_t *value) const {
+        return (_okay && nvs_get_u32 (_handle, name, value) == ESP_OK);
+    }
+    bool set (const char *name, const uint32_t value) {
+        return (_okay && nvs_set_u32 (_handle, name, value) == ESP_OK);
+    }
+    bool get (const char *name, int32_t *value) const {
+        return (_okay && nvs_get_i32 (_handle, name, value) == ESP_OK);
+    }
+    bool set (const char *name, const int32_t value) {
+        return (_okay && nvs_set_i32 (_handle, name, value) == ESP_OK);
+    }
+    // float, double
+    bool get (const char *name, String *value) const {
+        size_t size;
+        bool result = false;
+        if (_okay && nvs_get_str (_handle, name, NULL, &size) == ESP_OK) {
+            char *buffer = new char [size];
+            if (buffer) {
+                if (nvs_get_str (_handle, name, buffer, &size) == ESP_OK)
+                    (*value) = buffer, result = true;
+                delete [] buffer;
+            }
+        }
+        return result;
+    }
+    bool set (const char *name, const String &value) {
+        assert (value.length () <= VALUE_STRING_SIZE_MAXIMUM && "PersistentData String length > VALUE_STRING_SIZE_MAXIMUM");
+        return (_okay && nvs_set_str (_handle, name, value.c_str ()) == ESP_OK);
+    }
+};
+
+template <typename T>
+class PersistentValue {
+
+    PersistentData &_data;
+    const String _name;
+    const T _value_default;
+
+public:
+    explicit PersistentValue (PersistentData &data, const char *name, const T &value_default = T ()) :
+        _data (data),
+        _name (name),
+        _value_default (value_default) {
+        assert (_name.length () <= PersistentData::NAME_SIZE_MAXIMUM && "PersistentValue name length > NAME_SIZE_MAXIMUM");
+    }
+
+    operator T () const {
+        T value;
+        return _data.get (_name.c_str (), &value) ? value : _value_default;
+    }
+    bool operator= (const T value) {
+        return _data.set (_name.c_str (), value);
+    }
+    bool operator+= (const T value2) {
+        T value = _value_default;
+        _data.get (_name.c_str (), &value);
+        value += value2;
+        return _data.set (_name.c_str (), value);
+    }
+    bool operator>= (const T value2) const {
+        T value = _value_default;
+        _data.get (_name.c_str (), &value);
+        return value >= value2;
+    }
+    bool operator> (const T value2) const {
+        T value = _value_default;
+        _data.get (_name.c_str (), &value);
+        return value > value2;
+    }
+};
+
+// -----------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------
+
 #include <WiFi.h>
 #include <WiFiClient.h>
 
@@ -23,7 +133,6 @@ public:
         String identifier, username, password;
     };
     struct Config {
-        String publicKey;
         std::vector<ConfigDevice> devices;
         interval_t intervalRescan = DEFAULT_INTERVAL_RESCAN;
     };
@@ -41,6 +150,19 @@ private:
     std::vector<Device> devices;
     Intervalable intervalRescan;
     WiFiClient network;
+
+    PersistentData persistentData;
+    PersistentValue<String> persistentValuePublicKey;
+
+    String publicKey () {    // this is not efficient
+        String key = persistentValuePublicKey;
+        if (key.isEmpty ()) {
+            Serial.printf ("Hardware_P1xx:: publicKey not found in PersistentStore: generating and storing\n");
+            key = persistentValuePublicKey = tapo::generatePublicKey ();
+        } else
+            Serial.printf ("Hardware_P1xx:: publicKey retrieved from PersistentStore\n");
+        return key;
+    }
 
     bool deviceExists (const IPAddress &address) const {
         return std::find_if (devices.begin (), devices.end (), [&] (const auto &device) { return device.first->address () == address; }) != devices.end ();
@@ -76,13 +198,8 @@ private:
         }
     }
 
-public:
-    explicit Hardware_TapoP1xx (const Config &cfg) :
-        config (cfg),
-        intervalRescan (config.intervalRescan) { }
-
-    void state_discoverBegin () {
-        discover = std::make_unique<tapo::DiscoverUDP> (config.publicKey, tapo::TAPO_DISCOVERY_DEFAULT_PORT);
+    void discoverBegin () {
+        discover = std::make_unique<tapo::DiscoverUDP> (publicKey (), tapo::TAPO_DISCOVERY_DEFAULT_PORT);
         if (! discover || ! discover->begin ()) {
             Serial.printf ("Hardware_P1xx:: discover begin failed\n");
             state = State::Failed;
@@ -90,7 +207,7 @@ public:
         }
         state = State::Discover;
     }
-    void state_discoverProcess () {
+    void discoverProcess () {
         if (! discover->process ()) {
             discover->end ();
             deviceIdentify (discover->devices ());
@@ -103,10 +220,17 @@ public:
         }
     }
 
+public:
+    explicit Hardware_TapoP1xx (const Config &cfg) :
+        config (cfg),
+        intervalRescan (config.intervalRescan),
+        persistentData ("tapo"),
+        persistentValuePublicKey (persistentData, "publicKey") { }
+
     //
 
     void begin () {
-        state_discoverBegin ();
+        discoverBegin ();
         intervalRescan.reset ();
     }
     void end () {
@@ -115,9 +239,9 @@ public:
     }
     void process () {
         if (state == State::Discover)
-            state_discoverProcess ();
-        else if (state != State::Initial && intervalRescan)
-            state_discoverBegin ();
+            discoverProcess ();
+        else if ((state == State::Failed || state == State::Discovered) && intervalRescan)
+            discoverBegin ();
     }
 
     //
@@ -134,22 +258,22 @@ public:
         if (index >= 0 && index < devices.size ())
             devices [index].first->set_power (state);
         else
-            for (auto &device : devices)
-                device.first->set_power (state);
+            for (auto &[device, _] : devices)
+                device->set_power (state);
     }
     double powerCurrent (int index = -1) const {
+        double power = 0;
         if (index >= 0 && index < devices.size ()) {
-            const auto response = devices [index].first->get_current_power ();
-            return response.first ? response.second.current_power : 0;
-        } else {
-            double power = 0;
-            for (auto &device : devices) {
-                const auto response = device.first->get_current_power ();
-                if (response.first)
-                    power += response.second.current_power;
+            const auto [result, value] = devices [index].first->get_current_power ();
+            if (result)
+                power = value.current_power;
+        } else
+            for (auto &[device, _] : devices) {
+                const auto [result, value] = device->get_current_power ();
+                if (result)
+                    power += value.current_power;
             }
-            return power;
-        }
+        return power;
     }
 };
 
