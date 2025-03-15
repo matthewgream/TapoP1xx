@@ -27,7 +27,7 @@ String decodeBase64 (const String &input) {
 namespace tapo {
 
 struct DeviceConfig {
-    String address;
+    IPAddress address;
     String username;
     String password;
     int retry_count = 3;
@@ -46,6 +46,9 @@ protected:
 public:
     explicit Device (const Config &config, NetworkClient& client) :
         config_ (config), protocol_  (client) { }
+    const IPAddress& address () const {
+        return config_.address;
+    }
     StringResult connect () {
         return protocol_.login (config_.address, config_.username, config_.password);
     }

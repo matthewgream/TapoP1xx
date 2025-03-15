@@ -90,9 +90,12 @@ void inline startTime () {
 #include "Hardware_TapoP1xx.hpp"
 #include <WiFiClient.h>
 
-Hardware_TapoP1xx *p1xx_device;
-const Hardware_TapoP1xx::Config p1xx_config {
-    .device = { .address = TAPO_ADDRESS, .username = TAPO_USERNAME, .password = TAPO_PASSWORD }  // Secrets.hpp
+std::unique_ptr<Hardware_TapoP1xx> p1xx_device;
+Hardware_TapoP1xx::Config p1xx_config {
+    .devices = {
+        { .identifier = TAPO_IDENTIFIER,
+          .username = TAPO_USERNAME,
+          .password = TAPO_PASSWORD } }
 };
 
 void setup () {
@@ -102,10 +105,17 @@ void setup () {
     startWiFi ();
     startTime ();
 
-    test_P11x (p1xx_config.device);
+    // test_P11x (p1xx_config.device);
 
-    // p1xx_device = new Hardware_TapoP1xx (p1xx_config);
-    // p1xx_device->begin ();
+    // auto devices = tapo::discover (tapo::generatePublicKey ());
+    // for (const auto &[address, details] : devices) {
+    //     Serial.printf ("--- %s ---\n", address.toString ().c_str ());
+    //     details.debugDump ();
+    // }
+
+    p1xx_config.publicKey = tapo::generatePublicKey (); // or store in NVS
+    p1xx_device = std::make_unique<Hardware_TapoP1xx> (p1xx_config);
+    p1xx_device->begin ();
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -115,7 +125,7 @@ Intervalable second (15 * 1000);
 void loop () {
     second.wait ();
     Serial.println ("***");
-    // p1xx_device->process ();
+    p1xx_device->process ();
 }
 
 // -----------------------------------------------------------------------------------------------

@@ -34,9 +34,9 @@ void test_P11x (const tapo::DeviceConfig& config) {
         Serial.println ("Energy Data: " + device_energy_data_details.toString ());
     Serial.printf ("\n///\n");
 
-    auto [device_power_set_success, device_power_set_details] = device.set_power (true);
-    if (device_power_set_success)
-        Serial.println ("Power Set: " + device_power_set_details.toString ());
+    // auto [device_power_set_success, device_power_set_details] = device.set_power (true);
+    // if (device_power_set_success)
+    //     Serial.println ("Power Set: " + device_power_set_details.toString ());
 }
 
 // -----------------------------------------------------------------------------------------------

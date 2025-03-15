@@ -8,10 +8,16 @@
 
 #include <NetworkClient.h>
 #include <HTTPClient.h>
+
 #include <mbedtls/sha1.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/aes.h>
+#include <mbedtls/pk.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/base64.h>
 
+#include <bit>
 #include <array>
 #include <vector>
 #include <atomic>
@@ -158,6 +164,59 @@ TypeOfAESData aes_decrypt (const TypeOfAESData &data, const TypeOfAESKey &key, c
 // -----------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------
 
+static int _rsa_public_key_in_DER_format (const size_t key_size, uint8_t *key_buffer_data, const size_t key_buffer_size) {
+    mbedtls_pk_context key;
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    int len = -1;
+
+    mbedtls_pk_init (&key);
+    mbedtls_entropy_init (&entropy);
+    mbedtls_ctr_drbg_init (&ctr_drbg);
+
+    const char *pers = "generate_key";
+    if (mbedtls_ctr_drbg_seed (&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *) pers, strlen (pers)) == 0)
+        if (mbedtls_pk_setup (&key, mbedtls_pk_info_from_type (MBEDTLS_PK_RSA)) == 0)
+            if (mbedtls_rsa_gen_key (mbedtls_pk_rsa (key), mbedtls_ctr_drbg_random, &ctr_drbg, key_size, 65537) == 0)
+                len = mbedtls_pk_write_pubkey_der (&key, key_buffer_data, key_buffer_size);
+
+    mbedtls_ctr_drbg_free (&ctr_drbg);
+    mbedtls_entropy_free (&entropy);
+    mbedtls_pk_free (&key);
+
+    return len;
+}
+
+String rsa_public_key_PEM (const size_t key_size) {
+    unsigned char key_data [2048] = {};
+    String result;
+    int len;
+
+    if ((len = _rsa_public_key_in_DER_format (key_size, key_data, sizeof (key_data))) > 0) {
+
+        size_t public_key_bytes_len = (len * 4 / 3) + 4;
+        unsigned char *public_key_bytes = (unsigned char *) malloc (public_key_bytes_len);
+
+        if (public_key_bytes != NULL) {
+
+            if (mbedtls_base64_encode (public_key_bytes, public_key_bytes_len, &public_key_bytes_len, (unsigned char *) (key_data + sizeof (key_data) - len), len) == 0) {
+                static constexpr size_t LINE_LENGTH = 64;
+                result += "-----BEGIN PUBLIC KEY-----\n";
+                for (size_t i = 0; i < public_key_bytes_len; i += LINE_LENGTH)
+                    result += String ((char *) (public_key_bytes + i), (i + LINE_LENGTH < public_key_bytes_len) ? LINE_LENGTH : public_key_bytes_len - i) + "\n";
+                result += "-----END PUBLIC KEY-----\n";
+            }
+
+            free (public_key_bytes);
+        }
+    }
+
+    return result;
+}
+
+// -----------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------
+
 template <typename T, size_t N, typename Iterator>
 constexpr std::array<T, N> make_array (Iterator first, Iterator last) {
     std::array<T, N> result;
@@ -286,7 +345,7 @@ private:
         return String ();
     }
     template <typename R>
-    static std::pair<bool, int> postWithRetry (const String &context, HTTPClient& http, const uint8_t *data, const size_t size, const int retries) {
+    static std::pair<bool, int> postWithRetry (const String &context, HTTPClient &http, const uint8_t *data, const size_t size, const int retries) {
         int httpCode, counter = 0;
         do {
             if (counter > 0)
@@ -297,7 +356,7 @@ private:
     }
 
 private:
-    NetworkClient& networkClient;
+    NetworkClient &networkClient;
     String url;
     String cookie;
     std::unique_ptr<KlapCipher> cipher;
@@ -314,7 +373,8 @@ private:
     }
 
 public:
-    TapoProtocol (NetworkClient& nc) : networkClient (nc) {}
+    TapoProtocol (NetworkClient &nc) :
+        networkClient (nc) { }
 
     ResultJson requestJson (const String &method, JsonVariant &&params = JsonVariant (), const int retries = 3) const {
         JsonDocument doc;
@@ -346,12 +406,12 @@ public:
     }
 
 public:
-    Result login (const String &ip, const String &username, const String &password, const int retries = 3) {
+    Result login (const IPAddress &ip, const String &username, const String &password, const int retries = 3) {
         static const char *HEADERS_TO_COLLECT [1] = { "Set-Cookie" };
 
         // CONFIGURATION
 
-        DEBUG_TAPO_PRINTF ("tapo::TapoProtocol::login: commence, ip=%s, username=%s, password=%s\n", ip.c_str (), username.c_str (), password.c_str ());
+        DEBUG_TAPO_PRINTF ("tapo::TapoProtocol::login: commence, ip=%s, username=%s, password=%s\n", ip.toString ().c_str (), username.c_str (), password.c_str ());
         const auto auth_hash = sha256 (join (sha1 (KlapCipher::Bytes (username.begin (), username.end ())), sha1 (KlapCipher::Bytes (password.begin (), password.end ()))));
         const auto local_seed = make_random<uint8_t, KlapCipher::SizeOfKlapSeed> ();
         DEBUG_TAPO_DUMP ("tapo::TapoProtocol::login: auth hash", auth_hash);
@@ -359,7 +419,7 @@ public:
 
         // HANDSHAKE 1
 
-        const String url_handshake1 ("http://" + ip + "/app/handshake1");
+        const String url_handshake1 ("http://" + ip.toString () + "/app/handshake1");
         DEBUG_TAPO_PRINTF ("tapo::TapoProtocol::login: handshake1, commence, url=%s\n", url_handshake1.c_str ());
         HTTPClient http;
         http.begin (networkClient, url_handshake1);
@@ -389,7 +449,7 @@ public:
 
         // HANDSHAKE 2
 
-        const String url_handshake2 ("http://" + ip + "/app/handshake2");
+        const String url_handshake2 ("http://" + ip.toString () + "/app/handshake2");
         DEBUG_TAPO_PRINTF ("tapo::TapoProtocol::login: handshake2, commence, url=%s\n", url_handshake2.c_str ());
         const auto handshake2_hash = sha256 (join (remote_seed, local_seed, auth_hash));
         DEBUG_TAPO_DUMP ("tapo::TapoProtocol::login: handshake2 hash", handshake2_hash);
@@ -402,7 +462,7 @@ public:
 
         // COMPLETED
 
-        url = "http://" + ip + "/app";
+        url = "http://" + ip.toString () + "/app";
         cipher = std::make_unique<KlapCipher> (local_seed, remote_seed, auth_hash);
         DEBUG_TAPO_PRINTF ("tapo::TapoProtocol::login: complete, url=%s\n", url.c_str ());
 
